@@ -4,10 +4,10 @@
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-		<title>reveal.js</title>
+		<title>Introduction to Apache Samza</title>
 
 		<link rel="stylesheet" href="css/reveal.css">
-		<link rel="stylesheet" href="css/theme/black.css">
+		<link rel="stylesheet" href="css/theme/moon.css">
 
 		<!-- Theme used for syntax highlighting of code -->
 		<link rel="stylesheet" href="lib/css/zenburn.css">
@@ -24,9 +24,313 @@
 	<body>
 		<div class="reveal">
 			<div class="slides">
-				<section>Slide 1</section>
-				<section>Slide 2</section>
-			</div>
+
+				<section>
+					<h1>
+						Introduction to<br>
+						Apache
+						<svg class="samza" style="vertical-align: middle">
+							<use xlink:href="icons.svg#tech-samza"></use>
+						</svg>
+					</h1>
+
+				</section>
+
+				<section>
+					<h3>Nicolas Maquet</h3>
+          <p>Full-Stack Dev at Movio</p>
+					<p><code>@nicmaquet</code></p>
+					<p><code>github.com/nmaquet</code></p>
+					<br/>
+					<h4>Slides & Code</h4>
+          <p><code>github.com/nmaquet/samza-talk-movio</code></p>
+          <p><code>github.com/nmaquet/samza-hello-samza</code></p>
+				</section>
+
+				<section>
+					<h3>Apache Samza is a stream processing framework.</h3>
+					<div class="fragment">
+						<p>... but there are many others, check them out!</p>
+						<ul>
+							<li>Apache Storm</li>
+							<li>Apache Spark Streaming</li>
+							<li>Apache Flink</li>
+							<li>Kafka Streams</li>
+							<li>...</li>
+						</ul>
+					</div>
+				</section>
+
+				<section>
+					<h3>Background on Samza.</h3>
+					<ul>
+						<li>Developed at LinkedIn</li>
+						<li>LinkedIn use case: real-time tracking & analysis</li>
+						<li>Movio use case: change capture, real-time ETL</li>
+					</ul>
+				</section>
+
+        <section>
+          <h3>Problem 1</h3>
+          <ul>
+            <li><b>one</b> input topic with <b>one</b> partition</li>
+            <li><b>one</b> output topic with <b>one</b> partition</li>
+            <li>Stateless</li>
+            <br/>
+            <li>Difficulty level: (baby smurf)</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Understanding Samza: the StreamTask interface</h3>
+          <pre><code class="java" >
+  public interface StreamTask {
+    // Called once for each message that this StreamTask receives.
+    void process(
+      IncomingMessageEnvelope envelope,
+      MessageCollector collector,
+      TaskCoordinator coordinator
+    )
+  }
+          </code></pre>
+        </section>
+
+        <section>
+          <h3>Scala Code</h3>
+          <pre><code class="scala" >
+class StringSmurferTask extends StreamTask {
+
+  val WORDS = List("move", "go", "set", "get", "do", "make", "use")
+
+  val outputStreamName = "kafka.smurfed-text"
+
+  override def process(envelope: IncomingMessageEnvelope,
+                       collector: MessageCollector,
+                       coordinator: TaskCoordinator) {
+    val message = envelope.getMessage.asInstanceOf[String]
+    collector.send(new OutgoingMessageEnvelope(
+      Util.getSystemStreamFromNames(outputStreamName),
+      smurf(message)
+    ))
+  }
+
+
+  def smurf(message: String): String = {
+    var result = message
+    for (word <- WORDS) {
+      result = result.replaceAll(word, "smurf")
+    }
+    result
+  }
+}
+
+          </code></pre>
+        </section>
+
+        <section>
+          <h3>Properties File</h3>
+          <pre><code class="yaml" >job.factory.class=org.apache.samza.job.yarn.YarnJobFactory
+job.name=string-smurfer
+
+yarn.package.path=file://${basedir}/target/${project.artifactId}\
+    -${pom.version}-dist.tar.gz
+yarn.container.memory.mb=512
+
+task.class=demo.task.StringSmurferTask
+task.inputs=kafka.text
+
+serializers.registry.string.class=\
+    org.apache.samza.serializers.StringSerdeFactory
+
+systems.kafka.samza.factory=\
+  org.apache.samza.system.kafka.KafkaSystemFactory
+systems.kafka.consumer.zookeeper.connect=localhost:2181/
+systems.kafka.producer.bootstrap.servers=localhost:9092
+systems.kafka.streams.text.samza.key.serde=string
+systems.kafka.streams.text.samza.msg.serde=string
+systems.kafka.streams.smurfed-text.samza.key.serde=string
+systems.kafka.streams.smurfed-text.samza.msg.serde=string</code></pre></section>
+
+        <section>
+          (demo)
+        </section>
+
+        <section>
+          <h3>Problem 2</h3>
+          <ul>
+            <li><b>one</b> input topic with <b style="color: red">multiple</b> partitions</li>
+            <li><b>one</b> output topic with <b>one</b> partition</li>
+            <li>Stateless</li>
+            <br/>
+            <li>Difficulty level: (adult smurf)</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Understanding Samza: the Event Loop</h3>
+<small><pre>github.com/apache/samza/blob/master/samza-core/src/main/scala/org/apache/samza/container/RunLoop.scala</pre></small>
+          <pre><code class="scala" >  ...
+
+  def run {
+    addShutdownHook(Thread.currentThread())
+
+    val runTask = new Runnable() {
+      override def run(): Unit = {
+        val loopStartTime = clock()
+        process
+        window
+        commit
+        val totalNs = clock() - loopStartTime
+        metrics.utilization.set(activeNs.toFloat / totalNs)
+        activeNs = 0L
+      }
+    }
+
+    while (!shutdownNow) {
+      executor.execute(runTask)
+    }
+  }
+
+  private def process {
+    trace("Attempting to choose a message to process.")
+    metrics.processes.inc
+
+    // Exclude choose time from activeNs. Although it includes deserialization time,
+    // it most closely captures idle time.
+    val envelope = updateTimer(metrics.chooseNs) {
+     consumerMultiplexer.choose
+    }
+
+    activeNs += updateTimerAndGetDuration(metrics.processNs) ((currentTimeNs: Long) => {
+      if (envelope != null) {
+        val ssp = envelope.getSystemStreamPartition
+
+        trace("Processing incoming message envelope for SSP %s." format ssp)
+        metrics.envelopes.inc
+
+        val taskInstances = systemStreamPartitionToTaskInstances(ssp)
+        taskInstances.foreach {
+          taskInstance =>
+            {
+              val coordinator = new ReadableCoordinator(taskInstance.taskName)
+              taskInstance.process(envelope, coordinator)
+              checkCoordinator(coordinator)
+            }
+        }
+      } else {
+        trace("No incoming message envelope was available.")
+        metrics.nullEnvelopes.inc
+      }
+    })
+  }
+          </code></pre>
+        </section>
+
+        <section>
+          <h3>Scala Code</h3>
+<pre><code class="scala">class PartitionedStringSmurferTask
+    extends StreamTask with InitableTask {
+
+  val WORDS = List("move", "go", "set", "get", "do", "make", "use")
+
+  val outputStreamName = "kafka.smurfed-text"
+
+  var taskName: String = null
+
+  override def init(config: Config, context: TaskContext): Unit = {
+    taskName = context.getTaskName.toString
+  }
+
+  override def process(envelope: IncomingMessageEnvelope,
+                       collector: MessageCollector,
+                       coordinator: TaskCoordinator): Unit = {
+    val message = envelope.getMessage.asInstanceOf[String]
+    collector.send(new OutgoingMessageEnvelope(
+      Util.getSystemStreamFromNames(outputStreamName),
+      smurf(message)
+    ))
+  }
+
+  def smurf(message: String): String = {
+    var result = message
+    for (word <- WORDS) {
+      result = result.replaceAll(word, "smurf")
+    }
+    result + " (" + taskName + " )"
+  }
+
+}</code></pre>
+        </section>
+
+        <section>
+          <h3>Properties File</h3>
+          <pre><code class="yaml" >job.factory.class=org.apache.samza.job.yarn.YarnJobFactory
+job.name=string-smurfer-partitioned
+
+yarn.package.path=file://${basedir}/target/${project.artifactId}\
+    -${pom.version}-dist.tar.gz
+yarn.container.memory.mb=512
+
+task.class=demo.task.PartitionedStringSmurferTask
+task.inputs=kafka.partitioned-text
+
+serializers.registry.string.class=\
+    org.apache.samza.serializers.StringSerdeFactory
+
+systems.kafka.samza.factory=\
+  org.apache.samza.system.kafka.KafkaSystemFactory
+systems.kafka.consumer.zookeeper.connect=localhost:2181/
+systems.kafka.producer.bootstrap.servers=localhost:9092
+systems.kafka.streams.partitioned-text.samza.key.serde=string
+systems.kafka.streams.partitioned-text.samza.msg.serde=string
+systems.kafka.streams.smurfed-text.samza.key.serde=string
+systems.kafka.streams.smurfed-text.samza.msg.serde=string</code></pre></section>
+
+        <section>
+          (demo)
+        </section>
+
+        <section>
+          <h3>Problem 3</h3>
+          <ul>
+            <li><b>one</b> input topic with <b>multiple</b> partitions</li>
+            <li><b>one</b> output topic with <b>one</b> partition</li>
+            <li>Stateless</li>
+            <li>Process data <b style="color: red">in parallel on a cluster</b></li>
+            <br/>
+            <li>Difficulty level: (papa smurf)</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Understanding Samza: Containers</h3>
+          <ul>
+            <li>one <b>Application master container</b> per job</li>
+            <li>one or more <b>worker containers</b> per job</li>
+            <li>task instances are divided equally between containers</li>
+            <li>containers are managed by YARN across the whole cluster</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Scala Code</h3>
+          Nothing changes!
+        </section>
+
+        <section>
+          <h3>Properties File</h3>
+          <pre><code class="yaml" >...
+
+job.name=string-smurfer-partitioned-parallel
+yarn.container.count=4
+
+...</code></pre></section>
+
+        <section>
+          (demo)
+        </section>
+
+      </div>
 		</div>
 
 		<script src="lib/js/head.min.js"></script>
