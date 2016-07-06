@@ -48,7 +48,7 @@
 				</section>
 
 				<section>
-					<h3>Apache Samza is a stream processing framework.</h3>
+					<h3>Apache Samza is a stream processing framework</h3>
 					<div class="fragment">
 						<p>... but there are many others, check them out!</p>
 						<ul>
@@ -62,7 +62,7 @@
 				</section>
 
 				<section>
-					<h3>Background on Samza.</h3>
+					<h3>Background on Samza</h3>
 					<ul>
 						<li>Developed at LinkedIn</li>
 						<li>LinkedIn use case: real-time tracking & analysis</li>
@@ -331,6 +331,77 @@ yarn.container.count=4
 
         <section>
           (demo)
+        </section>
+
+        <section>
+          <h3>Problem 4</h3>
+          <ul>
+            <li><b style="color: red">multiple input topics</b> with multiple partitions</li>
+            <li>one output topic with one partition</li>
+            <li><b style="color: red">Stateful processing</b></li>
+            <br/>
+            <li>Difficulty level:</li>
+            <img width="200px" src="images/azrael.jpg" style="vertical-align: middle"/>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Understanding Samza: the KeyValueStore interface</h3>
+          <pre><code class="java">public interface KeyValueStore&lt;K, V&gt; {
+  V get(K key);
+  Map&lt;K, V&gt; getAll(List&lt;K&gt; keys);
+  void put(K key, V value);
+  void putAll(List&lt;Entry&lt;K, V&gt;&gt; entries);
+  void delete(K key);
+  void deleteAll(List&lt;K&gt; keys);
+  KeyValueIterator&lt;K, V&gt; range(K from, K to);
+  KeyValueIterator&lt;K, V&gt; all();
+  void close();
+  void flush();
+}</code></pre>
+        </section>
+
+        <section>
+          <h3>Understanding Samza: RocksDB & Kafka changelogs</h3>
+          <ul>
+            <li>Samza uses Facebook's RocksDB has a key value store</li>
+            <li>Samza creates one store per task</li>
+            <li>Stores live locally on each Yarn node</li>
+            <li>Stores are replicated on Kafka (via a changelog) for persistence</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Scala Code</h3>
+          <a href="https://github.com/nmaquet/samza-hello-samza/blob/master/src/main/scala/smurf/task/SmurfProfilerTask.scala">
+            <code><small>github.com/nmaquet/samza-hello-samza<br>/blob/master/src/main/scala/smurf/task/SmurfProfilerTask.scala</small></code>
+          </a>
+        </section>
+
+        <section>
+          <h3>Properties File</h3>
+          <a href="https://github.com/nmaquet/samza-hello-samza/blob/master/src/main/config/smurf-profiler.properties">
+            <code><small>github.com/nmaquet/samza-hello-samza<br>/blob/master/src/main/config/smurf-profiler.properties</small></code>
+          </a>
+        </section>
+
+        <section>
+          (demo)
+        </section>
+
+        <section>
+          <h3>Resources</h3>
+          <p><code>https://samza.apache.org/</code></p>
+          <p><code>https://github.com/apache/samza</code></p>
+          <p><code>http://rocksdb.org/</code></p>
+          <p><code>http://kafka.apache.org/</code></p>
+
+          <br>
+          <br>
+
+          <h3>Thanks!</h3>
+
+
         </section>
 
       </div>
